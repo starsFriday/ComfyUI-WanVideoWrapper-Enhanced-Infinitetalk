@@ -2052,9 +2052,38 @@ class WanVideoSampler:
                         motion_frame = image_embeds.get("motion_frame", 25)
                         target_w = image_embeds.get("target_w", None)
                         target_h = image_embeds.get("target_h", None)
-                        original_images = cond_image = image_embeds.get("multitalk_start_image", None)
+                        original_images = image_embeds.get("multitalk_start_image", None)
+                        sequential_start_images = image_embeds.get("multitalk_start_images", None)
+                        use_image_sequence = False
+                        sequence_last_index = -1
+
+                        if sequential_start_images is not None and hasattr(sequential_start_images, "numel") and sequential_start_images.numel() > 0:
+                            seq = sequential_start_images
+                            if seq.dim() == 5:
+                                channels = seq.shape[1]
+                                height = seq.shape[-2]
+                                width = seq.shape[-1]
+                                total_frames = seq.shape[0] * seq.shape[2]
+                                original_images = seq.permute(1, 0, 2, 3, 4).reshape(channels, total_frames, height, width).unsqueeze(0)
+                                use_image_sequence = True
+                            elif seq.dim() == 4:
+                                channels = seq.shape[1]
+                                height = seq.shape[-2]
+                                width = seq.shape[-1]
+                                original_images = seq.permute(1, 0, 2, 3).unsqueeze(0)
+                                use_image_sequence = True
+
+                        if original_images is not None and original_images.dim() == 4:
+                            original_images = original_images.unsqueeze(0)
+
                         if original_images is None:
-                            original_images = torch.zeros([noise.shape[0], 1, target_h, target_w], device=device)
+                            original_images = torch.zeros(1, 3, 1, target_h, target_w, device=device)
+
+                        cond_image = original_images[:, :, 0:1]
+                        if use_image_sequence:
+                            sequence_last_index = max(0, original_images.shape[2] - 1)
+                        else:
+                            sequential_start_images = None
 
                         output_path = image_embeds.get("output_path", "")
                         img_counter = 0
@@ -2119,9 +2148,25 @@ class WanVideoSampler:
                         while True: # start video generation iteratively
                             self.cache_state = [None, None]
 
+                            scheduled_image = None
+                            if use_image_sequence:
+                                sequence_idx = min(iteration_count, sequence_last_index)
+                                scheduled_image = original_images[:, :, sequence_idx:sequence_idx+1]
+                                cond_image = scheduled_image
+
                             cur_motion_frames_latent_num = int(1 + (cur_motion_frames_num-1) // 4)
                             if mode == "infinitetalk":
                                 cond_image = original_images[:, :, current_condframe_index:current_condframe_index+1] if cond_image is not None else None
+                            window_cond_image = cond_image if cond_image is not None else scheduled_image
+                            if window_cond_image is None:
+                                window_cond_image = original_images
+                            if use_image_sequence:
+                                color_match_reference = window_cond_image[0] if window_cond_image is not None else None
+                            else:
+                                ref_tensor = None
+                                if original_images is not None and hasattr(original_images, "dim") and original_images.dim() >= 4:
+                                    ref_tensor = original_images[0]
+                                color_match_reference = ref_tensor if ref_tensor is not None else (window_cond_image[0] if window_cond_image is not None else None)
                             if multitalk_embeds is not None:
                                 audio_embs = []
                                 # split audio with window size
@@ -2278,15 +2323,21 @@ class WanVideoSampler:
                             # uni3c slices
                             if uni3c_embeds is not None:
                                 vae.to(device)
-                                # Pad original_images if needed
-                                num_frames = original_images.shape[2]
+                                source_images = window_cond_image if window_cond_image is not None else original_images
+                                if source_images is None:
+                                    source_images = torch.zeros_like(original_images) if original_images is not None else torch.zeros(
+                                        1, 3, 1, target_h, target_w, dtype=torch.float32, device=device
+                                    )
+                                if source_images.dim() == 4:
+                                    source_images = source_images.unsqueeze(0)
+                                num_frames = source_images.shape[2]
                                 required_frames = audio_end_idx - audio_start_idx
                                 if audio_end_idx > num_frames:
                                     pad_len = audio_end_idx - num_frames
-                                    last_frame = original_images[:, :, -1:].repeat(1, 1, pad_len, 1, 1)
-                                    padded_images = torch.cat([original_images, last_frame], dim=2)
+                                    last_frame = source_images[:, :, -1:].repeat(1, 1, pad_len, 1, 1)
+                                    padded_images = torch.cat([source_images, last_frame], dim=2)
                                 else:
-                                    padded_images = original_images
+                                    padded_images = source_images
                                 render_latent = vae.encode(
                                     padded_images[:, :, audio_start_idx:audio_end_idx].to(device, vae.dtype),
                                     device=device, tiled=tiled_vae
@@ -2393,11 +2444,18 @@ class WanVideoSampler:
                                 from color_matcher import ColorMatcher
                                 cm = ColorMatcher()
                                 cm_result_list = []
+                                if mode == "multitalk":
+                                    ref_tensor = color_match_reference
+                                else:
+                                    ref_tensor = cond_image[0] if cond_image is not None else None
+                                ref_np = None
+                                if ref_tensor is not None and hasattr(ref_tensor, "dim") and ref_tensor.dim() >= 4:
+                                    ref_np = ref_tensor.permute(1, 2, 3, 0).squeeze(0).cpu().float().numpy()
                                 for img in videos:
-                                    if mode == "multitalk":
-                                        cm_result = cm.transfer(src=img, ref=original_images[0].permute(1, 2, 3, 0).squeeze(0).cpu().float().numpy(), method=colormatch)
+                                    if ref_np is None:
+                                        cm_result = img
                                     else:
-                                        cm_result = cm.transfer(src=img, ref=cond_image[0].permute(1, 2, 3, 0).squeeze(0).cpu().float().numpy(), method=colormatch)
+                                        cm_result = cm.transfer(src=img, ref=ref_np, method=colormatch)
                                     cm_result_list.append(torch.from_numpy(cm_result).to(vae.dtype))
 
                                 videos = torch.stack(cm_result_list, dim=0).permute(3, 0, 1, 2)

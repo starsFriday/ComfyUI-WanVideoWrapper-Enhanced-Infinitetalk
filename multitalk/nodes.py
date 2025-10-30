@@ -358,7 +358,6 @@ class MultiTalkSilentEmbeds:
         }
         return (multitalk_embeds,)
 
-
 class WanVideoImageToVideoMultiTalk:
     @classmethod
     def INPUT_TYPES(s):
@@ -443,11 +442,127 @@ class WanVideoImageToVideoMultiTalk:
         }
 
         return (image_embeds, output_path)
+
+class WanVideoImageToVideoMultiTalkEnhanced:
+    MAX_IMAGE_INPUTS = 20
+
+    @classmethod
+    def INPUT_TYPES(s):
+        sequential_image_inputs = {
+            "start_image": ("IMAGE", {"tooltip": "Base image used for the first frame window"}),
+        }
+        for idx in range(2, s.MAX_IMAGE_INPUTS + 1):
+            sequential_image_inputs[f"start_image_{idx}"] = ("IMAGE", {"tooltip": f"Optional image #{idx} for subsequent frame windows"})
+
+        optional_inputs = {
+            **sequential_image_inputs,
+            "tiled_vae": ("BOOLEAN", {"default": False, "tooltip": "Use tiled VAE encoding for reduced memory use"}),
+            "mode": ([
+                "auto",
+                "multitalk",
+                "infinitetalk"
+            ], {"default": "auto", "tooltip": "The sampling strategy to use in the long video generation loop, should match the model used"}),
+            "output_path": ("STRING", {"default": "", "tooltip": "If set, will save each window's resulting frames to this folder, also DISABLES returning the final video tensor to save memory"}),
+        }
+
+        return {"required": {
+            "vae": ("WANVAE",),
+            "clip_embeds": ("WANVIDIMAGE_CLIPEMBEDS", {"tooltip": "Clip vision encoded image"}),
+            "width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8, "tooltip": "Width of the generation"}),
+            "height": ("INT", {"default": 480, "min": 64, "max": 29048, "step": 8, "tooltip": "Height of the generation"}),
+            "frame_window_size": ("INT", {"default": 81, "min": 1, "max": 10000, "step": 4, "tooltip": "The number of frames to process at once, should be a value the model is generally good at."}),
+            "motion_frame": ("INT", {"default": 25, "min": 1, "max": 10000, "step": 1, "tooltip": "Driven frame length used in the long video generation. Basically the overlap length."}),
+            "image_count": ("INT", {"default": 1, "min": 1, "max": s.MAX_IMAGE_INPUTS, "step": 1, "tooltip": "How many input images to cycle across frame windows."}),
+            "force_offload": ("BOOLEAN", {"default": False, "tooltip": "Whether to force offload the model within the loop for VAE operations, enable if you encounter memory issues."}),
+            "colormatch": (
+            [   
+                'disabled',
+                'mkl',
+                'hm', 
+                'reinhard', 
+                'mvgd', 
+                'hm-mvgd-hm', 
+                'hm-mkl-hm',
+            ], {
+               "default": 'disabled', "tooltip": "Color matching method to use between the windows"
+            },),
+            },
+            "optional": optional_inputs
+        }
+
+    RETURN_TYPES = ("WANVIDIMAGE_EMBEDS", "STRING",)
+    RETURN_NAMES = ("image_embeds", "output_path")
+    FUNCTION = "process"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Enables Multi/InfiniteTalk long video generation sampling method, the video is created in windows with overlapping frames. Not compatible or necessary to be used with context windows and many other features besides Multi/InfiniteTalk."
+
+    def process(self, vae, width, height, frame_window_size, motion_frame, image_count, force_offload, colormatch, start_image=None, tiled_vae=False, clip_embeds=None, mode="multitalk", output_path="", **kwargs):
+
+        H = height
+        W = width
+        VAE_STRIDE = (4, 8, 8)
+        
+        num_frames = ((frame_window_size - 1) // 4) * 4 + 1
+
+        def preprocess_image(image_tensor):
+            single_image_batch = image_tensor[0].unsqueeze(0)
+            image_channels_first = single_image_batch.movedim(-1, 1)
+            resized_image = common_upscale(image_channels_first, W, H, "lanczos", "disabled").movedim(0, 1)
+            normalized_image = resized_image * 2 - 1
+            return normalized_image.unsqueeze(0)
+
+        processed_images = []
+        if start_image is not None:
+            processed_images.append(preprocess_image(start_image))
+            for idx in range(2, image_count + 1):
+                key = f"start_image_{idx}"
+                extra_image = kwargs.get(key, None)
+                if extra_image is None:
+                    raise ValueError(f"'image_count' is set to {image_count}, but '{key}' is missing. Please connect all required image inputs.")
+                processed_images.append(preprocess_image(extra_image))
+
+        processed_images_tensor = torch.cat(processed_images, dim=0) if processed_images else None
+        
+        target_shape = (16, (num_frames - 1) // VAE_STRIDE[0] + 1,
+                        height // VAE_STRIDE[1],
+                        width // VAE_STRIDE[2])
+        
+        if output_path:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(output_path, f"{timestamp}_{mode}_output")
+            os.makedirs(output_path, exist_ok=True)
+
+        sequence_mode = processed_images_tensor is not None and processed_images_tensor.shape[0] > 1
+        first_image_tensor = processed_images_tensor[:1] if processed_images_tensor is not None else None
+
+        image_embeds = {
+            "multitalk_sampling": True,
+            "multitalk_start_image": first_image_tensor,
+            "multitalk_start_images": processed_images_tensor,
+            "multitalk_sequence_image_mode": sequence_mode,
+            "multitalk_sequence_image_count": processed_images_tensor.shape[0] if processed_images_tensor is not None else 0,
+            "frame_window_size": num_frames,
+            "motion_frame": motion_frame,
+            "target_h": H,
+            "target_w": W,
+            "tiled_vae": tiled_vae,
+            "force_offload": force_offload,
+            "vae": vae,
+            "target_shape": target_shape,
+            "clip_context": clip_embeds.get("clip_embeds", None) if clip_embeds is not None else None,
+            "colormatch": colormatch,
+            "multitalk_mode": mode,
+            "output_path": output_path
+        }
+
+        return (image_embeds, output_path)
+    
     
 NODE_CLASS_MAPPINGS = {
     "MultiTalkModelLoader": MultiTalkModelLoader,
     "MultiTalkWav2VecEmbeds": MultiTalkWav2VecEmbeds,
     "WanVideoImageToVideoMultiTalk": WanVideoImageToVideoMultiTalk,
+    "WanVideoImageToVideoMultiTalkEnhanced": WanVideoImageToVideoMultiTalkEnhanced,
     "Wav2VecModelLoader": Wav2VecModelLoader,
     "MultiTalkSilentEmbeds": MultiTalkSilentEmbeds,
 }
@@ -456,6 +571,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MultiTalkModelLoader": "Multi/InfiniteTalk Model Loader",
     "MultiTalkWav2VecEmbeds": "Multi/InfiniteTalk Wav2vec2 Embeds",
     "WanVideoImageToVideoMultiTalk": "WanVideo Long I2V Multi/InfiniteTalk",
+    "WanVideoImageToVideoMultiTalkEnhanced": "WanVideo Long I2V Multi/InfiniteTalk Enhanced",
     "Wav2VecModelLoader": "Wav2vec2 Model Loader",
     "MultiTalkSilentEmbeds": "MultiTalk Silent Embeds",
 }
