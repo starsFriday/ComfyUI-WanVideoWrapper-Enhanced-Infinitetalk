@@ -125,29 +125,29 @@ NODE_DISPLAY_NAME_MAPPINGS.update(OVI_NODE_DISPLAY_NAME_MAPPINGS)
 NODE_DISPLAY_NAME_MAPPINGS.update(FLASHVSR_NODE_DISPLAY_NAME_MAPPINGS)
 NODE_DISPLAY_NAME_MAPPINGS.update(MOCHA_NODE_DISPLAY_NAME_MAPPINGS)
 
-def _namespace_mappings(class_map, display_map, prefix="ENH_", display_suffix=" (Enhanced)"):
-    namespaced_class_map = {}
-    namespaced_display_map = {}
+# def _namespace_mappings(class_map, display_map, prefix="ENH_", display_suffix=" (Enhanced)"):
+#     namespaced_class_map = {}
+#     namespaced_display_map = {}
 
-    for key, cls in class_map.items():
-        new_key = f"{prefix}{key}"
-        namespaced_class_map[new_key] = cls
+#     for key, cls in class_map.items():
+#         new_key = f"{prefix}{key}"
+#         namespaced_class_map[new_key] = cls
 
-        display_name = display_map.get(key, key)
-        namespaced_display_map[new_key] = f"{display_name}{display_suffix}"
+#         display_name = display_map.get(key, key)
+#         namespaced_display_map[new_key] = f"{display_name}{display_suffix}"
 
-    for key, display_name in display_map.items():
-        new_key = f"{prefix}{key}"
-        if new_key not in namespaced_display_map:
-            namespaced_display_map[new_key] = f"{display_name}{display_suffix}"
+#     for key, display_name in display_map.items():
+#         new_key = f"{prefix}{key}"
+#         if new_key not in namespaced_display_map:
+#             namespaced_display_map[new_key] = f"{display_name}{display_suffix}"
 
-    return namespaced_class_map, namespaced_display_map
+#     return namespaced_class_map, namespaced_display_map
 
-NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS = _namespace_mappings(
-    NODE_CLASS_MAPPINGS,
-    NODE_DISPLAY_NAME_MAPPINGS,
-    prefix="ENH_",
-    display_suffix=" (Enhanced)"
-)
+# NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS = _namespace_mappings(
+#     NODE_CLASS_MAPPINGS,
+#     NODE_DISPLAY_NAME_MAPPINGS,
+#     prefix="ENH_",
+#     display_suffix=" (Enhanced)"
+# )
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
