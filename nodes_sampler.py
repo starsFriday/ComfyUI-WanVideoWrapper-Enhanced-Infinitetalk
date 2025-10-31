@@ -3126,8 +3126,8 @@ class WanVideoSampler:
 
 
 NODE_CLASS_MAPPINGS = {
-    "WanVideoSampler": WanVideoSampler,
+    "WanVideoSamplerEnhanced": WanVideoSampler,
     }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "WanVideoSampler": "WanVideo Sampler",
+    "WanVideoSamplerEnhanced": "WanVideo Sampler Enhanced",
 }
