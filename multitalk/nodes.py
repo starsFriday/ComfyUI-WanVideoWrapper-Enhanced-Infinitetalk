@@ -559,19 +559,19 @@ class WanVideoImageToVideoMultiTalkEnhanced:
     
     
 NODE_CLASS_MAPPINGS = {
-    "MultiTalkModelLoader": MultiTalkModelLoader,
-    "MultiTalkWav2VecEmbeds": MultiTalkWav2VecEmbeds,
-    "WanVideoImageToVideoMultiTalk": WanVideoImageToVideoMultiTalk,
+    "MultiTalkModelLoaderEnhanced": MultiTalkModelLoader,
+    "MultiTalkWav2VecEmbedsEnhanced": MultiTalkWav2VecEmbeds,
+    "WanVideoImageToVideoMultiTalkOriginal": WanVideoImageToVideoMultiTalk,
     "WanVideoImageToVideoMultiTalkEnhanced": WanVideoImageToVideoMultiTalkEnhanced,
-    "Wav2VecModelLoader": Wav2VecModelLoader,
-    "MultiTalkSilentEmbeds": MultiTalkSilentEmbeds,
+    "Wav2VecModelLoaderEnhanced": Wav2VecModelLoader,
+    "MultiTalkSilentEmbedsEnhanced": MultiTalkSilentEmbeds,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MultiTalkModelLoader": "Multi/InfiniteTalk Model Loader",
-    "MultiTalkWav2VecEmbeds": "Multi/InfiniteTalk Wav2vec2 Embeds",
-    "WanVideoImageToVideoMultiTalk": "WanVideo Long I2V Multi/InfiniteTalk",
+    "MultiTalkModelLoaderEnhanced": "Multi/InfiniteTalk Model Loader Enhanced",
+    "MultiTalkWav2VecEmbedsEnhanced": "Multi/InfiniteTalk Wav2vec2 Embeds Enhanced",
+    "WanVideoImageToVideoMultiTalkOriginal": "WanVideo Long I2V Multi/InfiniteTalk Original",
     "WanVideoImageToVideoMultiTalkEnhanced": "WanVideo Long I2V Multi/InfiniteTalk Enhanced",
-    "Wav2VecModelLoader": "Wav2vec2 Model Loader",
-    "MultiTalkSilentEmbeds": "MultiTalk Silent Embeds",
+    "Wav2VecModelLoaderEnhanced": "Wav2vec2 Model Loader Enhanced",
+    "MultiTalkSilentEmbedsEnhanced": "MultiTalk Silent Embeds Enhanced",
 }
