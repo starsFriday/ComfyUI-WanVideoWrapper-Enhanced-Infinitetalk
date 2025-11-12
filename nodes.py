@@ -446,6 +446,208 @@ class WanVideoTextEncode:
             weights[text] = float(weight)
             
         return cleaned_prompt, weights
+
+class WanVideoTextEncodeMprompt:
+    @classmethod
+    def INPUT_TYPES(s):
+        extra_positive_prompts = {
+            f"positive_prompt_{i}": ("STRING", {"default": "", "multiline": True})
+            for i in range(2, 21)
+        }
+        return {"required": {
+            "positive_prompt": ("STRING", {"default": "", "multiline": True} ),
+            "negative_prompt": ("STRING", {"default": "色调艳丽,过曝,静态,细节模糊不清,字幕,风格,作品,画作,画面,静止,整体发灰,最差质量,低质量,JPEG压缩残留,丑陋的,残缺的,多余的手指,画得不好的手部,画得不好的脸部,畸形的,毁容的,形态畸形的肢体,手指融合,静止不动的画面,杂乱的背景,三条腿,背景人很多,倒着走", "multiline": True} ),
+            "textencode_gap": ("INT", {"default": 1, "min": 1, "max": 100, "step": 1, "tooltip": "Number of sampling windows to reuse each prompt before switching to the next."}),
+            },
+            "optional": {
+                **extra_positive_prompts,
+                "t5": ("WANTEXTENCODER",),
+                "force_offload": ("BOOLEAN", {"default": True}),
+                "model_to_offload": ("WANVIDEOMODEL", {"tooltip": "Model to move to offload_device before encoding"}),
+                "use_disk_cache": ("BOOLEAN", {"default": False, "tooltip": "Cache the text embeddings to disk for faster re-use, under the custom_nodes/ComfyUI-WanVideoWrapper/text_embed_cache directory"}),
+                "device": (["gpu", "cpu"], {"default": "gpu", "tooltip": "Device to run the text encoding on."}),
+                "reset_condition_on_prompt_change": ("BOOLEAN", {"default": True, "tooltip": "Reset image conditioning when the prompt index changes so each prompt can take full effect."}),
+            }
+        }
+
+    RETURN_TYPES = ("WANVIDEOTEXTEMBEDS", )
+    RETURN_NAMES = ("text_embeds",)
+    FUNCTION = "process"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Encodes text prompts into text embeddings. For rudimentary prompt travel you can input multiple prompts separated by '|', they will be equally spread over the video length"
+
+
+    def process(self, positive_prompt, negative_prompt, textencode_gap=1, t5=None, force_offload=True, model_to_offload=None, use_disk_cache=False, device="gpu", reset_condition_on_prompt_change=True, **kwargs):
+        if t5 is None and not use_disk_cache:
+            raise ValueError("T5 encoder is required for text encoding. Please provide a valid T5 encoder or enable disk cache.")
+
+        try:
+            textencode_gap = int(textencode_gap)
+        except (TypeError, ValueError):
+            textencode_gap = 1
+        textencode_gap = max(1, textencode_gap)
+
+        extra_positive_prompts = []
+        for idx in range(2, 21):
+            key = f"positive_prompt_{idx}"
+            value = kwargs.pop(key, "")
+            extra_positive_prompts.append(value if isinstance(value, str) else "")
+
+        positive_prompts_raw = []
+        echoshot = False
+
+        def extend_from_text(text):
+            nonlocal echoshot
+            if text is None:
+                return
+            stripped = text.strip()
+            if stripped == "":
+                return
+            if "[1]" in stripped:
+                import re
+                echoshot = True
+                segments = re.split(r'\[\d+\]', stripped)
+                segments = [segment.strip() for segment in segments if segment.strip()]
+                if len(segments) < 2 or len(segments) > 6:
+                    raise ValueError("EchoShot prompts require between 2 and 6 segments.")
+                positive_prompts_raw.extend(segments)
+            elif "|" in stripped:
+                parts = [part.strip() for part in stripped.split('|') if part.strip()]
+                positive_prompts_raw.extend(parts)
+            else:
+                positive_prompts_raw.append(stripped)
+
+        extend_from_text(positive_prompt)
+        for prompt_value in extra_positive_prompts:
+            extend_from_text(prompt_value)
+
+        if not positive_prompts_raw:
+            positive_prompts_raw = [""]
+
+        positive_prompts = []
+        all_weights = []
+        for p in positive_prompts_raw:
+            cleaned_prompt, weights = self.parse_prompt_weights(p)
+            positive_prompts.append(cleaned_prompt)
+            all_weights.append(weights)
+
+        cache_positive_prompt = "\n".join(positive_prompts_raw)
+
+        context = context_null = None
+        if use_disk_cache:
+            context, context_null = get_cached_text_embeds(cache_positive_prompt, negative_prompt)
+            if context is not None and context_null is not None:
+                return ({
+                    "prompt_embeds": context,
+                    "negative_prompt_embeds": context_null,
+                    "echoshot": echoshot,
+                    "textencode_gap": textencode_gap,
+                    "prompt_texts": positive_prompts,
+                    "reset_condition_on_prompt_change": reset_condition_on_prompt_change,
+                },)
+
+        if t5 is None:
+            raise ValueError("No cached text embeds found for prompts, please provide a T5 encoder.")
+
+        if model_to_offload is not None and device == "gpu":
+            try:
+                log.info(f"Moving video model to {offload_device}")
+                model_to_offload.model.to(offload_device)
+            except:
+                pass
+
+        encoder = t5["model"]
+        dtype = t5["dtype"]
+        
+        mm.soft_empty_cache()
+
+        if device == "gpu":
+            device_to = mm.get_torch_device()
+        else:
+            device_to = torch.device("cpu")
+
+        if encoder.quantization == "fp8_e4m3fn":
+            cast_dtype = torch.float8_e4m3fn
+        else:
+            cast_dtype = encoder.dtype
+
+        params_to_keep = {'norm', 'pos_embedding', 'token_embedding'}
+        for name, param in encoder.model.named_parameters():
+            dtype_to_use = dtype if any(keyword in name for keyword in params_to_keep) else cast_dtype
+            value = encoder.state_dict[name] if hasattr(encoder, 'state_dict') else encoder.model.state_dict()[name]
+            set_module_tensor_to_device(encoder.model, name, device=device_to, dtype=dtype_to_use, value=value)
+        if hasattr(encoder, 'state_dict'):
+            del encoder.state_dict
+            mm.soft_empty_cache()
+            gc.collect()
+
+        with torch.autocast(device_type=mm.get_autocast_device(device_to), dtype=encoder.dtype, enabled=encoder.quantization != 'disabled'):
+            # Encode positive if not loaded from cache
+            if not (use_disk_cache and context is not None):
+                context = encoder(positive_prompts, device_to)
+                # Apply weights to embeddings if any were extracted
+                for i, weights in enumerate(all_weights):
+                    for text, weight in weights.items():
+                        log.info(f"Applying weight {weight} to prompt: {text}")
+                        if len(weights) > 0:
+                            context[i] = context[i] * weight
+
+            # Encode negative if not loaded from cache
+            if not (use_disk_cache and context_null is not None):
+                context_null = encoder([negative_prompt], device_to)
+
+        if force_offload:
+            encoder.model.to(offload_device)
+            mm.soft_empty_cache()
+            gc.collect()
+
+        prompt_embeds_dict = {
+            "prompt_embeds": context,
+            "negative_prompt_embeds": context_null,
+            "echoshot": echoshot,
+            "textencode_gap": textencode_gap,
+            "prompt_texts": positive_prompts,
+            "reset_condition_on_prompt_change": reset_condition_on_prompt_change,
+        }
+
+        # Save each part to its own cache file if needed
+        if use_disk_cache:
+            pos_cache_path = get_cache_path(cache_positive_prompt)
+            neg_cache_path = get_cache_path(negative_prompt)
+            try:
+                if not os.path.exists(pos_cache_path):
+                    torch.save(context, pos_cache_path)
+                    log.info(f"Saved prompt embeds to cache: {pos_cache_path}")
+            except Exception as e:
+                log.warning(f"Failed to save cache: {e}")
+            try:
+                if not os.path.exists(neg_cache_path):
+                    torch.save(context_null, neg_cache_path)
+                    log.info(f"Saved prompt embeds to cache: {neg_cache_path}")
+            except Exception as e:
+                log.warning(f"Failed to save cache: {e}")
+
+        return (prompt_embeds_dict,)
+    
+    def parse_prompt_weights(self, prompt):
+        """Extract text and weights from prompts with (text:weight) format"""
+        import re
+        
+        # Parse all instances of (text:weight) in the prompt
+        pattern = r'\((.*?):([\d\.]+)\)'
+        matches = re.findall(pattern, prompt)
+        
+        # Replace each match with just the text part
+        cleaned_prompt = prompt
+        weights = {}
+        
+        for match in matches:
+            text, weight = match
+            orig_text = f"({text}:{weight})"
+            cleaned_prompt = cleaned_prompt.replace(orig_text, text)
+            weights[text] = float(weight)
+            
+        return cleaned_prompt, weights
     
 class WanVideoTextEncodeSingle:
     @classmethod
@@ -2170,6 +2372,7 @@ class WanVideoEncode:
 NODE_CLASS_MAPPINGS = {
     "WanVideoDecodeEnhanced": WanVideoDecode,
     "WanVideoTextEncodeEnhanced": WanVideoTextEncode,
+    "WanVideoTextEncodeMprompt":WanVideoTextEncodeMprompt,
     # "WanVideoTextEncodeSingle": WanVideoTextEncodeSingle,
     "WanVideoClipVisionEncodeEnhanced": WanVideoClipVisionEncode,
     # "WanVideoImageToVideoEncode": WanVideoImageToVideoEncode,
@@ -2209,6 +2412,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoDecodeEnhanced": "WanVideo Decode Enhanced",
     "WanVideoTextEncodeEnhanced": "WanVideo TextEncode Enhanced",
+    "WanVideoTextEncodeMprompt": "WanVideo TextEncode Mprompt",
     # "WanVideoTextEncodeSingle": "WanVideo TextEncodeSingle",
     # "WanVideoTextImageEncode": "WanVideo TextImageEncode (IP2V)",
     "WanVideoClipVisionEncodeEnhanced": "WanVideo ClipVision Encode Enhanced",

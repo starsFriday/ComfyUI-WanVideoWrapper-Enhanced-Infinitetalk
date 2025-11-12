@@ -275,13 +275,13 @@ class WanVideoCombineEmbeds:
 
 
 NODE_CLASS_MAPPINGS = {
-    "WhisperModelLoader": WhisperModelLoader,
-    "HuMoEmbeds": HuMoEmbeds,
-    "WanVideoCombineEmbeds": WanVideoCombineEmbeds,
+    "WhisperModelLoaderEnhanced": WhisperModelLoader,
+    "HuMoEmbedsEnhanced": HuMoEmbeds,
+    "WanVideoCombineEmbedsEnhanced": WanVideoCombineEmbeds,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "WhisperModelLoader": "Whisper Model Loader",
-    "HuMoEmbeds": "HuMo Embeds",
-    "WanVideoCombineEmbeds": "WanVideo Combine Embeds",
+    "WhisperModelLoaderEnhanced": "Whisper Model Loader Enhanced",
+    "HuMoEmbedsEnhanced": "HuMo Embeds Enhanced",
+    "WanVideoCombineEmbedsEnhanced": "WanVideo Combine Embeds Enhanced",
 }
