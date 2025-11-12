@@ -2155,6 +2155,47 @@ class WanVideoRoPEFunction:
             return (rope_func_dict,)
         return (rope_function,)
 
+class TextToPromptsNode:
+    """
+    一个ComfyUI节点，接收一大段文本输入，并将其按行分割成最多20个独立的prompt输出。
+    节点会忽略文本中的空白行。
+    """
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        """
+        定义节点的输入类型。
+        - text: 一个多行的字符串输入框。
+        """
+        return {
+            "required": {
+                "text": ("STRING", {"forceInput": True}),
+            },
+        }
+
+    # 定义节点的返回类型为20个字符串
+    RETURN_TYPES = ("STRING",) * 20
+    RETURN_NAMES = tuple(f"prompt_{i+1}" for i in range(20))
+
+    FUNCTION = "process_text"
+
+    CATEGORY = "text"
+
+    def process_text(self, text):
+        """
+        处理输入文本的核心函数。
+        """
+        lines = [line for line in text.splitlines() if line.strip()]
+
+        prompts = [""] * 20
+
+        for i in range(min(len(lines), 20)):
+            prompts[i] = lines[i].strip()
+
+        return tuple(prompts)
+
 
 #region VideoDecode
 class WanVideoDecode:
@@ -2370,6 +2411,7 @@ class WanVideoEncode:
         return ({"samples": latents, "noise_mask": mask},)
 
 NODE_CLASS_MAPPINGS = {
+    "TextTo20Prompts": TextToPromptsNode,
     "WanVideoDecodeEnhanced": WanVideoDecode,
     "WanVideoTextEncodeEnhanced": WanVideoTextEncode,
     "WanVideoTextEncodeMprompt":WanVideoTextEncodeMprompt,
@@ -2410,6 +2452,7 @@ NODE_CLASS_MAPPINGS = {
     }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "TextTo20Prompts": "Mprompt String",
     "WanVideoDecodeEnhanced": "WanVideo Decode Enhanced",
     "WanVideoTextEncodeEnhanced": "WanVideo TextEncode Enhanced",
     "WanVideoTextEncodeMprompt": "WanVideo TextEncode Mprompt",
