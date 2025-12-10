@@ -2,7 +2,7 @@
 ### 说明：
 1. **项目介绍**：主要是增加了infinitetalk对于多图的支持。
 2. **使用方法**：使用下面的示例工作流即可。
-3. **示例视频**：https://github.com/user-attachments/assets/1b78d1f9-6793-4284-8471-74c8f2189676
+https://github.com/user-attachments/assets/1b78d1f9-6793-4284-8471-74c8f2189676
 4. **示例工作流和节点**：<img width="879" height="1122" alt="db712424c4b427f076ee1f1287489312" src="https://ai.static.ad2.cc/workflow-multi_infinitetalkv2.png" />
 
 <img width="540" height="959" alt="db712424c4b427f076ee1f1287489312" src="https://ai.static.ad2.cc/node.png" />
